@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-acme/lego/v4/acme"
+	"github.com/go-acme/lego/v4/log"
 )
 
 type RequestOption func(*http.Request) error
@@ -85,6 +86,18 @@ func (d *Doer) newRequest(method, uri string, body io.Reader, opts ...RequestOpt
 }
 
 func (d *Doer) do(req *http.Request, response interface{}) (*http.Response, error) {
+	// add exetended logging in order to demonstrate the communication with the CA
+	// debug request->Body: log it
+	if req.Body != nil {
+		reqBody, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read request body for debugging: %w", err)
+		}
+		req.Body.Close()
+		req.Body = io.NopCloser(strings.NewReader(string(reqBody))) // use strings.NewReader() here to avoid importing "bytes"
+		log.Infof("Request: %s %s\n%s", req.Method, req.URL, string(reqBody))
+	}
+
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -101,6 +114,9 @@ func (d *Doer) do(req *http.Request, response interface{}) (*http.Response, erro
 		}
 
 		defer resp.Body.Close()
+
+		// debug response->Body: log it
+		log.Infof("Response: %s %s\n%s", resp.Status, req.URL, string(raw))
 
 		err = json.Unmarshal(raw, response)
 		if err != nil {

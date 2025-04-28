@@ -313,15 +313,18 @@ func (c *Certifier) getForOrder(domains []string, order acme.ExtendedOrder, requ
 	//   object.
 
 	var san []string
-	if commonName != "" {
-		san = append(san, commonName)
-	}
+	// if commonName != "" {
+	// 	san = append(san, commonName)
+	// }
 
-	for _, auth := range order.Identifiers {
-		if auth.Value != commonName {
-			san = append(san, auth.Value)
-		}
-	}
+	// for _, auth := range order.Identifiers {
+	// 	if auth.Value != commonName {
+	// 		san = append(san, auth.Value)
+	// 	}
+	// }
+
+	// commonName must be != "" ?
+	san = append(san, domains...) // this fixes the issue with wildcard certificates in san
 
 	csrOptions := certcrypto.CSROptions{
 		Domain:         commonName,
