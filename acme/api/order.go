@@ -85,6 +85,19 @@ func (o *OrderService) NewWithOptions(domains []string, opts *OrderOptions) (acm
 		}
 	}
 
+	// Check if the Identifiers changed, which they must not.
+	// The elements of the "authorizations" and "identifiers" arrays are immutable once set. The server MUST NOT
+	// change the contents of either array after they are created. If a client observes a change in the contents of
+	// either array, then it SHOULD consider the order invalid.
+	// https://www.rfc-editor.org/rfc/rfc8555#section-7.1.3
+	// Identifier order might be different, thus we need a helper function.
+	if !IdentifiersMatch(order.Identifiers, orderReq.Identifiers) {
+		return acme.ExtendedOrder{},
+			fmt.Errorf("order: Order Identifiers do not match: %+v != %+v (ACME Server != ACME Client). "+
+			"The order is considered invalid as per RFC 8555 section 7.1.3",
+				order.Identifiers, identifiers)
+	}
+
 	return acme.ExtendedOrder{
 		Order:    order,
 		Location: resp.Header.Get("Location"),

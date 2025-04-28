@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -105,6 +106,89 @@ func TestOrderService_NewWithOptions(t *testing.T) {
 			assert.Equal(t, test.expected, order)
 		})
 	}
+}
+
+func TestOrderService_NewWithOptions_IdentifierMatch(t *testing.T) {
+	mux, apiURL := tester.SetupFakeAPI(t)
+
+	// small value keeps test fast
+	privateKey, errK := rsa.GenerateKey(rand.Reader, 1024)
+	require.NoError(t, errK, "Could not generate test key")
+
+	// Create an atomic flag to control response modification
+	var returnMismatchedIdentifiers int32
+
+	mux.HandleFunc("/newOrder", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
+		}
+
+		body, err := readSignedBody(r, privateKey)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		orderReq := acme.Order{}
+		err = json.Unmarshal(body, &orderReq)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// Create response order with either matching or mismatched identifiers
+		orderResp := acme.Order{
+			Status: acme.StatusPending,
+		}
+
+		if atomic.LoadInt32(&returnMismatchedIdentifiers) == 1 {
+			// Return mismatched identifiers
+			orderResp.Identifiers = []acme.Identifier{
+				{Type: "dns", Value: "example.com"},
+				{Type: "dns", Value: "example.com"},
+			}
+		} else {
+			// Return matching identifiers
+			orderResp.Identifiers = orderReq.Identifiers
+		}
+
+		err = tester.WriteJSONResponse(w, orderResp)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	})
+
+	core, err := New(http.DefaultClient, "lego-test", apiURL+"/dir", "", privateKey)
+	require.NoError(t, err)
+
+	// Test case 1: Identifiers match (normal case)
+	t.Run("matching identifiers", func(t *testing.T) {
+		atomic.StoreInt32(&returnMismatchedIdentifiers, 0)
+
+		domains := []string{"example.com", "*.example.com"}
+		order, err := core.Orders.NewWithOptions(domains, nil)
+		require.NoError(t, err)
+
+		expected := []acme.Identifier{
+			{Type: "dns", Value: "*.example.com"},
+			{Type: "dns", Value: "example.com"},
+		}
+		assert.True(t, IdentifiersMatch(order.Identifiers, expected))
+	})
+
+	// Test case 2: Identifiers don't match (should return error)
+	t.Run("mismatched identifiers", func(t *testing.T) {
+		atomic.StoreInt32(&returnMismatchedIdentifiers, 1)
+
+		domains := []string{"example.com", "*.example.com"}
+		_, err := core.Orders.NewWithOptions(domains, nil)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Order Identifiers do not match")
+		assert.Contains(t, err.Error(), "considered invalid as per RFC 8555")
+	})
 }
 
 func readSignedBody(r *http.Request, privateKey *rsa.PrivateKey) ([]byte, error) {
